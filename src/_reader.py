@@ -7,10 +7,8 @@ from datetime import datetime
 
 from typing import Dict, List, Any
 
-BAD_CONNECT_COST = 10_000  # large number for missing connections
-PENALTY_VALUE_FAMILY = 25
-SIBLING_COST = 5  # more than the 4.x
-PENALTY_VALUE_FAMILY_G_R = PENALTY_VALUE_FAMILY * 3
+from _pytest import deprecated
+
 YEAR_JSON_PATTERN = re.compile(r"^(\d{4})\.json$")
 
 
@@ -34,6 +32,11 @@ def read_all_year_json_files(directory: str) -> Dict[str, Dict[str, str]]:
     return data_by_year
 
 
+BAD_CONNECT_COST = 10_000  # large number for missing connections
+PENALTY_VALUE_FAMILY = 100
+LONG_TERM_GIFT_PENALTY = 4
+SIBLING_COST = LONG_TERM_GIFT_PENALTY + 1
+PENALTY_VALUE_FAMILY_GIFT_REBOUND = PENALTY_VALUE_FAMILY * 3
 COST_TABLE = [BAD_CONNECT_COST, BAD_CONNECT_COST / 10, BAD_CONNECT_COST / 25, 15, 10, 4, 4, 4, 4, 4, 4, 4]
 
 
@@ -52,7 +55,7 @@ def cost_func(year_index: int) -> int:
 
 class Reader:
     def __init__(self):
-        self.names_list: List[str] = []
+        self.people_list: List[str] = []
         self.connections: Dict[str, Dict[str, int]] = {}
         self.ignore_people: List = []
         self.families: Dict[str, List[str]] = {}
@@ -102,12 +105,8 @@ class Reader:
         return total + penalties
 
     @classmethod
-    def three_names_in_family(cls, family, name_r, name_rg, name_g):
-        return name_r in family and name_rg in family and name_g in family
-
-    @classmethod
-    def both_names_in_family(cls, family, name_g, name_r):
-        return name_g in family and name_r in family
+    def name_in_family(cls, family, name_g):
+        return name_g in family
 
     # reciprocal giving, (tail = start)
     def check_pairing(self, name_list):
@@ -131,40 +130,62 @@ class Reader:
         print("pairing = {}".format(joint_count))
         return total
 
-    # currently solved by picking 3 random results
-    # since distribution is bad, this is difficult for a general giving
-    def get_penalties(self, name_list):
-        penalty = 0
+    def get_family_for_member_of_family(self, name: str) -> List[str]:
+        if self.families.get(name,None):  # head of family
+            return self.families[name]
         for family_name in self.families.keys():
-            family = self.families[family_name]
-            for cnt in range(0, len(name_list) - 1):
-                if self.both_names_in_family(family, name_list[cnt], name_list[cnt + 1]):
-                    penalty += PENALTY_VALUE_FAMILY
-                if cnt > 0 and self.three_names_in_family(family, name_list[cnt - 1], name_list[cnt],
-                                                          name_list[cnt + 1]):
-                    penalty += PENALTY_VALUE_FAMILY_G_R
+            if name in self.families[family_name]:
+                return self.families[family_name]
+        return []
 
-                # reciprocal rule Tony->Michael->Karin
-                if cnt > 0 and self.both_names_in_family(family, name_list[cnt - 1], name_list[cnt + 1]):
-                    penalty += PENALTY_VALUE_FAMILY_G_R
-
-            # same rules but for ends of list
-            if self.both_names_in_family(family, name_list[len(name_list) - 1], name_list[0]):
-                penalty += PENALTY_VALUE_FAMILY
-
-            if self.three_names_in_family(family, name_list[len(name_list) - 1], name_list[0], name_list[1]):
-                penalty += PENALTY_VALUE_FAMILY_G_R
-
-            if self.three_names_in_family(family, name_list[len(name_list) - 2], name_list[len(name_list) - 1],
-                                          name_list[0]):
-                penalty += PENALTY_VALUE_FAMILY_G_R
-
-            if name_list[1] in family and name_list[len(name_list) - 1] in family and name_list[0] in family:
-                penalty += PENALTY_VALUE_FAMILY_G_R
-
-        if penalty <= PENALTY_VALUE_FAMILY:
+    def get_penalties_when_last_added(self, name_list: List[str]):
+        penalty = 0
+        pos = len(name_list) - 1  # position of this name
+        if pos < 1:
             return 0
-        return penalty - PENALTY_VALUE_FAMILY
+
+        name = name_list[pos]
+        family = self.get_family_for_member_of_family(name)
+
+        name_1 = name_list[pos - 1]
+        if self.name_in_family(family, name_1):
+            penalty += PENALTY_VALUE_FAMILY
+
+        if pos >= 2 :
+            name_2 = name_list[pos - 2]
+            if self.name_in_family(family,name_2) :
+                penalty += PENALTY_VALUE_FAMILY_GIFT_REBOUND
+
+        return penalty
+
+    def get_penalties_when_last_added_idx(self, name_idx: List[int]):
+        penalty = 0
+        pos = len(name_idx) - 1  # position of this name
+        if pos < 1:
+            return 0
+
+        name = self.people_list[name_idx[pos]]
+        family = self.get_family_for_member_of_family(name)
+
+        name_1 = self.people_list[name_idx[pos-1]]
+        if self.name_in_family(family, name_1):
+            penalty += PENALTY_VALUE_FAMILY
+
+        if pos >= 2 :
+            name_2 = self.people_list[name_idx[pos-2]]
+            if self.name_in_family(family,name_2) :
+                penalty += PENALTY_VALUE_FAMILY_GIFT_REBOUND
+
+        return penalty
+
+    def get_penalties(self, name_list):
+        """ be sure to wrap the list to the end"""
+        penalty = 0
+        test_name_list = []
+        for name in name_list:
+            test_name_list += name
+            penalty += self.get_penalties_when_last_added(test_name_list)
+        return penalty
 
     def add_bi_connections(self, name1, name2, value):
         self.add_connections(name1, name2, value)
@@ -210,7 +231,6 @@ class Reader:
         for key in self.connections.keys():
             print(key, self.connections[key])
 
-
     def build_cost_matrix(self,
                           people_list: List[str]) -> List[List[int]]:
         """
@@ -237,13 +257,9 @@ class Reader:
         return matrix
 
     def get_random_list_of_people(self) -> List[str]:
-        first_person = random.choice(list(self.connections.keys()))
-        people_list: List = [first_person]
-        for key in self.connections.keys():
-            if key not in people_list:
-                people_list.append(key)
-        return people_list
-
+        self.people_list = list(self.connections.keys())
+        random.shuffle(self.people_list)
+        return self.people_list
 
     def load(self) -> Dict[str, Dict[str, int]]:
         # a hash of people with a hash of people with value
@@ -252,7 +268,7 @@ class Reader:
         #
         data = read_json_file("../data/base.json")
         self.ignore_people = data['ignore']
-        self.families=data['families']
+        self.families = data['families']
 
         self.add_family_values(self.families, BAD_CONNECT_COST, SIBLING_COST)
         self.add_costs(data['otherCostsBi'], True)

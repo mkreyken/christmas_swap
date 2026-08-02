@@ -1,3 +1,9 @@
+"""
+CDepth first search algorythm with penalties for connection in results
+
+The randomness is in how the list of names is initially prepared, otherwise this is deterministic (same inputs = same outputs)
+
+"""
 from collections import defaultdict
 from typing import Tuple, List
 
@@ -70,7 +76,7 @@ def chain_to_names(chain, people_list):
 from heapq import heappush, heappop
 
 
-def bfs_min_chain(reader, min_cost, cost_matrix, people_list):
+def dfs_min_chain(reader, min_cost, cost_matrix, people_list):
     n = len(cost_matrix)
 
     # Priority queue: (total_cost, path_list)
@@ -81,21 +87,15 @@ def bfs_min_chain(reader, min_cost, cost_matrix, people_list):
     best_value = BAD_CONNECT_COST * 10
     best_path = None
 
-    while pq :
+    while pq:
         cost, path = heappop(pq)
         last = path[-1]
 
-        # If this path already exceeds best known cost, skip
         if cost >= best_cost:
             continue
 
         # If path includes all nodes → we found a full chain
         if len(path) == n:
-            # find first
-            # best_cost = cost
-            # best_path = path
-            # continue
-
             wrapped_path = path + [path[0]]
             chain_names = [people_list[i] for i in wrapped_path]
             total_value = reader.get_total_value(chain_names)
@@ -131,19 +131,13 @@ def bfs_min_chain(reader, min_cost, cost_matrix, people_list):
     return chain_names, best_cost
 
 
-def best_start(edges):
-    # pick the endpoint of the cheapest MST edge
-    u, v, cost = min(edges, key=lambda e: e[2])
-    return u
-
-
 def main():
     reader = Reader()
     reader.load()
     people_list = reader.get_random_list_of_people()
     cost_matrix = reader.build_cost_matrix(people_list)
     # stop when you get something small !
-    chain, cost = bfs_min_chain(reader, 50, cost_matrix, people_list)
+    chain, cost = dfs_min_chain(reader, 50, cost_matrix, people_list)
 
     print("Minimum-cost chain:")
     print(" -> ".join(chain))
